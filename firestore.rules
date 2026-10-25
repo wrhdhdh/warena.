@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // Профили. ELO, победы, поражения, K/D/A, история, ник и игровой ID клиент менять не может:
+    // их записывает только судья-бот (он работает с правами администратора и правила обходит).
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.elo == 1000 && request.resource.data.w == 0 && request.resource.data.l == 0
+        && request.resource.data.k == 0 && request.resource.data.d == 0 && request.resource.data.a == 0
+        && request.resource.data.gid is string && request.resource.data.nick is string
+        && request.resource.data.nick.size() >= 1 && request.resource.data.nick.size() <= 30;
+      allow update: if signedIn() && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['elo','w','l','k','d','a','mh','gid','nick']);
+      allow delete: if false;
+    }
+
+    // Уникальные никнеймы и игровые ID (один ID = один аккаунт)
+    match /nicks/{n} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /gids/{g} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Заявки на смену никнейма (покупка в магазине): пишет игрок, выполняет судья-бот
+    match /nickreq/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.newNick is string && request.resource.data.newNick.size() <= 30;
+    }
+
+    // Очередь поиска матча
+    match /queue/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if signedIn();
+    }
+
+    // Матчи: создаёт игрок из очереди, меняют только участники
+    match /matches/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid in request.resource.data.uids;
+      allow update: if signedIn() && request.auth.uid in resource.data.uids;
+      allow delete: if false;
+    }
+
+    // Отчёты о результате: пишет только участник матча, читает только судья-бот и консоль Firebase
+    match /results/{id} {
+      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid
+        && request.auth.uid in get(/databases/$(database)/documents/matches/$(request.resource.data.matchId)).data.uids;
+      allow read, delete: if false;
+    }
+
+    // Заявки в друзья (id = кому_от кого; отмена дружбы = id с суффиксом _u)
+    match /freq/{id} {
+      allow read: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.from == request.auth.uid
+        && id.matches(request.resource.data.to + '_' + request.auth.uid + '(_u)?');
+      allow update: if signedIn() && resource.data.to == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+    }
+
+    // Приглашения в лобби (id = кому_от кого)
+    match /invites/{id} {
+      allow read: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.from == request.auth.uid
+        && id == request.resource.data.to + '_' + request.auth.uid;
+      allow update: if signedIn() && resource.data.to == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+    }
+
+    // Пати: лидер управляет, приглашённый может войти
+    match /parties/{leader} {
+      allow read: if signedIn() && (leader == request.auth.uid || request.auth.uid in resource.data.memberIds);
+      allow create: if signedIn() && leader == request.auth.uid;
+      allow update: if signedIn() && (leader == request.auth.uid || request.auth.uid in resource.data.memberIds
+        || exists(/databases/$(database)/documents/invites/$(request.auth.uid + '_' + leader)));
+      allow delete: if signedIn() && leader == request.auth.uid;
+    }
+  }
+}

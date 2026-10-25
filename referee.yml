@@ -1,0 +1,22 @@
+name: referee
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+concurrency:
+  group: referee
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: cd bot && npm install --no-audit --no-fund
+      - run: node bot/referee.js --loop 270
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          # GRACE_SECONDS: 0   # раскомментируйте, чтобы подтверждать матч сразу после первого отчёта
